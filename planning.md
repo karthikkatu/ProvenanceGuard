@@ -1,0 +1,390 @@
+# Provenance Guard - Planning
+
+## Project Overview
+
+Provenance Guard is a backend attribution service for creative platforms. It analyzes submitted text and estimates whether it is more likely human-written or AI-generated. The system combines multiple independent detection signals, calculates a confidence score, displays a transparency label that communicates uncertainty honestly, records every decision in a structured audit log, and allows creators to appeal classifications they believe are incorrect.
+
+The goal of the system is **not** to prove authorship. Instead, it provides readers with additional context while giving creators a fair appeals process and maintaining a transparent record of every attribution decision.
+
+---
+
+# Detection Signals
+
+## Signal 1 – LLM Classification (Groq – Llama 3.3 70B Versatile)
+
+### What it measures
+
+This signal evaluates the submitted text holistically. It considers writing style, coherence, organization, fluency, repetition, transitions, and other characteristics that resemble either human or AI-generated writing.
+
+### Why this differs between human and AI writing
+
+Large language models can recognize high-level stylistic patterns that simple statistical methods cannot measure. AI-generated writing often has consistent structure and predictable phrasing, while human writing tends to contain more natural variation.
+
+### Blind spots
+
+This signal cannot determine the true author. Highly polished human writing may appear AI-generated, while carefully prompted AI-generated writing may appear human.
+
+### Output
+
+A normalized score between **0.0 and 1.0**.
+
+* **0.0** → Strongly Human
+* **0.5** → Uncertain
+* **1.0** → Strongly AI
+
+Example:
+
+```json
+{
+  "score": 0.82,
+  "reason": "Writing is highly consistent with repetitive sentence structure."
+}
+```
+
+---
+
+## Signal 2 – Stylometric Heuristics
+
+### What it measures
+
+This signal measures objective characteristics of the writing, including:
+
+* Sentence length variation
+* Vocabulary diversity (Type-Token Ratio)
+* Punctuation density
+* Average sentence complexity
+
+These measurements are combined into a normalized score.
+
+### Why this differs between human and AI writing
+
+Human writing generally contains more natural variation in sentence length, vocabulary, and punctuation. AI-generated writing is often more structurally consistent.
+
+### Blind spots
+
+Stylometric features only analyze structure. They cannot understand creativity, intent, or meaning. Professional writers and edited text may appear AI-like, while modern AI can imitate human variation.
+
+### Output
+
+A normalized score between **0.0 and 1.0**.
+
+* **0.0** → Strongly Human-like
+* **0.5** → Mixed
+* **1.0** → Strongly AI-like
+
+Example:
+
+```json
+{
+  "score": 0.68,
+  "metrics": {
+    "sentence_variance": 0.21,
+    "type_token_ratio": 0.42,
+    "punctuation_density": 0.11
+  }
+}
+```
+
+---
+
+## Combining the Signals
+
+Both signals contribute equally.
+
+```
+Final Score =
+(LLM Score × 0.5) +
+(Stylometric Score × 0.5)
+```
+
+The LLM evaluates semantic and stylistic properties, while the heuristics evaluate measurable structural properties. Combining independent signals produces a more balanced decision than relying on only one.
+
+---
+
+# Confidence Scoring & Uncertainty
+
+The final confidence score ranges from **0.0 to 1.0**.
+
+| Score Range | Interpretation                     |
+| ----------- | ---------------------------------- |
+| 0.00–0.30   | Strong evidence of human writing   |
+| 0.31–0.44   | Mostly human with some uncertainty |
+| 0.45–0.55   | Uncertain                          |
+| 0.56–0.69   | Mostly AI but uncertain            |
+| 0.70–1.00   | Strong evidence of AI writing      |
+
+### Meaning of a score of 0.60
+
+A score of **0.60** means the evidence leans toward AI-generated content, but not strongly enough to confidently make that claim. The system intentionally communicates uncertainty instead of making a definitive classification.
+
+### Classification Thresholds
+
+| Final Score | Classification |
+| ----------- | -------------- |
+| < 0.45      | Human          |
+| 0.45–0.69   | Uncertain      |
+| ≥ 0.70      | AI             |
+
+The uncertainty range is intentionally wide to reduce false positives against human creators.
+
+---
+
+# Transparency Labels
+
+These are the exact labels displayed to readers.
+
+## High-Confidence AI
+
+> **Likely AI-Generated**
+>
+> Our analysis indicates with high confidence that this content was generated using AI. This result is based on multiple detection signals and is not proof of authorship.
+
+---
+
+## High-Confidence Human
+
+> **Likely Human-Written**
+>
+> Our analysis indicates with high confidence that this content was written by a person. This result is based on multiple detection signals and is not proof of authorship.
+
+---
+
+## Uncertain
+
+> **Unable to Determine**
+>
+> Our analysis found mixed evidence. We cannot confidently determine whether this content was written by a person or generated by AI.
+
+---
+
+# Appeals Workflow
+
+## Who can submit an appeal?
+
+The creator of the content.
+
+## Information Submitted
+
+* Decision ID
+* Content ID
+* Creator ID (optional)
+* Appeal reason
+* Optional supporting context
+
+## What Happens After an Appeal?
+
+1. Validate the request.
+2. Store the creator's explanation.
+3. Link the appeal to the original decision.
+4. Keep the original classification unchanged.
+5. Update the content status to **under_review**.
+6. Record the appeal in the audit log.
+7. Return confirmation to the creator.
+
+## Audit Log Fields
+
+Every appeal records:
+
+* Appeal ID
+* Decision ID
+* Content ID
+* Creator reason
+* Timestamp
+* Status (`under_review`)
+
+## Human Review Queue
+
+A reviewer should see:
+
+* Original submitted text
+* Attribution result
+* Confidence score
+* Individual signal scores
+* Transparency label shown to users
+* Creator's appeal explanation
+* Submission timestamp
+* Appeal status
+
+---
+
+# Anticipated Edge Cases
+
+## 1. Poetry
+
+Poetry often contains repetitive wording, simple vocabulary, unusual formatting, and short lines. These characteristics may cause the stylometric heuristics to incorrectly resemble AI-generated writing.
+
+---
+
+## 2. Highly Edited Professional Writing
+
+Professional authors, journalists, or technical writers often produce polished and highly consistent writing that may resemble AI-generated structure.
+
+---
+
+## 3. Very Short Content
+
+Examples include quotes, captions, titles, or one-paragraph posts.
+
+There is often not enough text for either detection signal to produce reliable evidence, so the system should naturally return lower confidence and frequently choose the **Uncertain** label.
+
+---
+
+## 4. Human-Edited AI Content
+
+A creator may substantially edit AI-generated text before publishing.
+
+The LLM may detect more human-like characteristics while the stylometric heuristics still resemble AI-generated writing. This disagreement should reduce confidence and often produce the **Uncertain** classification.
+
+---
+
+## False Positive Consideration
+
+A false positive occurs when human-written work is classified as AI-generated. Because this can unfairly affect a creator's reputation, the system is designed to be conservative. When the two detection signals disagree or provide weak evidence, the confidence score should decrease rather than forcing a confident decision.
+
+Instead of displaying a strong AI label, borderline cases should receive the **Uncertain** label. Creators who believe their work has been misclassified can submit an appeal, which records their explanation, changes the content status to **under_review**, and preserves both the original decision and the appeal in the audit log for later review.
+
+---
+
+# Architecture
+
+## Submission Flow
+
+```text
+Client
+  |
+  | raw text submission
+  v
+POST /submit (Flask API)
+  |
+  | validated text
+  v
+Detection Pipeline
+  |-------------------------------|
+  |                               |
+  | raw text                      | raw text
+  v                               v
+Signal 1: Groq LLM Classifier   Signal 2: Stylometric Heuristics
+  |                               |
+  | LLM signal score              | heuristic score
+  |-------------------------------|
+                  |
+                  | combined signal outputs
+                  v
+        Confidence Scoring Engine
+                  |
+                  | final score + attribution result
+                  v
+        Transparency Label Generator
+                  |
+                  | label text + decision metadata
+                  v
+             Structured Audit Log
+                  |
+                  | decision response
+                  v
+               API Response
+                  |
+                  | label shown to user
+                  v
+               Client UI
+```
+
+## Appeal Flow
+
+```text
+Creator
+  |
+  | appeal reason + decision_id
+  v
+POST /appeals (Flask API)
+  |
+  | validate appeal
+  v
+Appeal Processor
+  |
+  | update status to under_review
+  | create appeal audit entry
+  v
+Structured Audit Log
+  |
+  | appeal confirmation
+  v
+API Response
+```
+
+### Architecture Narrative
+
+A submitted text first enters the `POST /submit` endpoint, where the backend validates the request, runs both detection signals, combines their outputs into a confidence score, and maps that score to one of the three transparency labels. The complete decision—including signal outputs, confidence score, selected label, and timestamp—is stored in the structured audit log before the response is returned to the client.
+
+If a creator disagrees with the classification, they submit an appeal through `POST /appeals`. The system records the creator's explanation, links it to the original decision, updates the content status to **under_review**, stores the appeal in the audit log, and returns a confirmation response without automatically changing the original classification.
+
+---
+
+# AI Tool Plan
+
+This project will be implemented in three stages. For each milestone, only the relevant sections of this specification and the architecture diagram will be provided to the AI coding tool to ensure the generated implementation follows this design.
+
+## Milestone 3 – Submission Endpoint + First Signal
+
+### Spec Sections Provided
+
+* Detection Signals
+* Architecture
+
+### Code to Generate
+
+* Flask application skeleton
+* `POST /submit` endpoint
+* Groq LLM classification function
+* Structured JSON response
+
+### Verification
+
+* Test the LLM function with clearly human, clearly AI, and mixed examples.
+* Verify that the function returns the expected score format.
+* Confirm the endpoint returns the correct JSON response.
+
+---
+
+## Milestone 4 – Second Signal + Confidence Scoring
+
+### Spec Sections Provided
+
+* Detection Signals
+* Confidence Scoring & Uncertainty
+* Architecture
+
+### Code to Generate
+
+* Stylometric heuristic module
+* Confidence scoring logic
+* Classification threshold logic
+
+### Verification
+
+* Compare results on clearly human and clearly AI examples.
+* Ensure confidence changes meaningfully between examples.
+* Verify disagreement between the two signals lowers confidence and can produce the **Uncertain** classification.
+
+---
+
+## Milestone 5 – Production Layer
+
+### Spec Sections Provided
+
+* Transparency Labels
+* Appeals Workflow
+* Architecture
+
+### Code to Generate
+
+* Transparency label generation
+* `POST /appeals` endpoint
+* Appeal status update logic
+* Audit log integration
+
+### Verification
+
+* Confirm all three transparency labels can be produced.
+* Submit an appeal and verify the content status changes to **under_review**.
+* Verify the appeal is correctly linked to the original decision in the audit log.
