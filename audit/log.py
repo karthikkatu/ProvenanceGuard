@@ -12,7 +12,10 @@ from typing import List
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audit.db")
 
 # Columns this version of the schema requires.
-_REQUIRED_COLUMNS = {"content_id", "llm_score", "attribution", "confidence", "timestamp"}
+_REQUIRED_COLUMNS = {
+    "content_id", "llm_score", "attribution", "confidence",
+    "stylometric_score", "timestamp",
+}
 
 
 def init_db() -> None:
@@ -26,17 +29,19 @@ def init_db() -> None:
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS submissions (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                content_id      TEXT    NOT NULL UNIQUE,
-                creator_id      TEXT    NOT NULL,
-                text            TEXT    NOT NULL,
-                llm_score       REAL    NOT NULL,
-                llm_reason      TEXT    NOT NULL,
-                attribution     TEXT    NOT NULL,
-                confidence      REAL    NOT NULL,
-                label_text      TEXT    NOT NULL,
-                status          TEXT    NOT NULL,
-                timestamp       TEXT    NOT NULL
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id          TEXT    NOT NULL UNIQUE,
+                creator_id          TEXT    NOT NULL,
+                text                TEXT    NOT NULL,
+                llm_score           REAL    NOT NULL,
+                llm_reason          TEXT    NOT NULL,
+                stylometric_score   REAL    NOT NULL,
+                stylometric_reason  TEXT    NOT NULL,
+                attribution         TEXT    NOT NULL,
+                confidence          REAL    NOT NULL,
+                label_text          TEXT    NOT NULL,
+                status              TEXT    NOT NULL,
+                timestamp           TEXT    NOT NULL
             )
         """)
 
@@ -48,15 +53,18 @@ def write_submission(entry: dict) -> None:
             INSERT INTO submissions (
                 content_id, creator_id, text,
                 llm_score, llm_reason,
+                stylometric_score, stylometric_reason,
                 attribution, confidence, label_text,
                 status, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             entry["content_id"],
             entry["creator_id"],
             entry["text"],
             entry["llm_score"],
             entry["llm_reason"],
+            entry["stylometric_score"],
+            entry["stylometric_reason"],
             entry["attribution"],
             entry["confidence"],
             entry["label_text"],
