@@ -3,13 +3,16 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
+from extensions import limiter
 from audit.log import write_submission
+from signals.labels import generate_label
 from signals.pipeline import run_pipeline
 
 submit_bp = Blueprint("submit", __name__)
 
 
 @submit_bp.route("/submit", methods=["POST"])
+@limiter.limit("10 per minute;100 per day")
 def submit():
     data = request.get_json(silent=True)
     if not data:
@@ -34,6 +37,7 @@ def submit():
         return jsonify({"error": "Detection pipeline failed. Check your API key and network."}), 502
 
     content_id = "cont_" + str(uuid.uuid4())
+    label = generate_label(result["confidence_score"])
 
     write_submission({
         "content_id":         content_id,
@@ -45,20 +49,20 @@ def submit():
         "stylometric_reason": result["signal_2"].get("reason", ""),
         "attribution":        result["attribution_result"],
         "confidence":         result["confidence_score"],
-        "label_text":         "Analysis in progress",  # placeholder — Milestone 5
+        "label_text":         label["title"],
         "status":             "classified",
         "timestamp":          datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     })
 
     return jsonify({
-        "content_id":        content_id,
-        "creator_id":        creator_id,
-        "text":              text,
-        "signal_1":          result["signal_1"],
-        "signal_2":          result["signal_2"],
+        "content_id":         content_id,
+        "creator_id":         creator_id,
+        "text":               text,
+        "signal_1":           result["signal_1"],
+        "signal_2":           result["signal_2"],
         "attribution_result": result["attribution_result"],
-        "confidence_score":  result["confidence_score"],
-        "combined_reason":   result["combined_reason"],
-        "label_text":        "Analysis in progress",  # placeholder — Milestone 5
-        "status":            "classified",
+        "confidence_score":   result["confidence_score"],
+        "combined_reason":    result["combined_reason"],
+        "label":              label,
+        "status":             "classified",
     }), 200

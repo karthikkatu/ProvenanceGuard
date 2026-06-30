@@ -7,7 +7,7 @@ Milestone 5 adds an appeals table to the same database.
 
 import os
 import sqlite3
-from typing import List
+from typing import List, Optional
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audit.db")
 
@@ -45,6 +45,24 @@ def init_db() -> None:
             )
         """)
 
+        # Appeals table — migrate if the column was previously named 'reason'.
+        appeal_cols = {row[1] for row in conn.execute("PRAGMA table_info(appeals)")}
+        if appeal_cols and "appeal_reasoning" not in appeal_cols:
+            conn.execute("DROP TABLE IF EXISTS appeals")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS appeals (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                appeal_id        TEXT    NOT NULL UNIQUE,
+                content_id       TEXT    NOT NULL,
+                creator_id       TEXT    NOT NULL DEFAULT '',
+                appeal_reasoning TEXT    NOT NULL,
+                context          TEXT    NOT NULL DEFAULT '',
+                status           TEXT    NOT NULL,
+                timestamp        TEXT    NOT NULL
+            )
+        """)
+
 
 def write_submission(entry: dict) -> None:
     """Append one audit row. Raises on missing required keys."""
@@ -74,13 +92,19 @@ def write_submission(entry: dict) -> None:
 
 
 def get_log() -> List[dict]:
-    """Return all submissions, newest first."""
+    """Return all submissions with appeal_status, newest first."""
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM submissions ORDER BY id DESC"
-        ).fetchall()
-    return [dict(row) for row in rows]
+        rows = conn.execute("""
+            SELECT
+                s.*,
+                EXISTS(
+                    SELECT 1 FROM appeals a WHERE a.content_id = s.content_id
+                ) AS appeal_status
+            FROM submissions s
+            ORDER BY s.id DESC
+        """).fetchall()
+    return [{**dict(row), "appeal_status": bool(row["appeal_status"])} for row in rows]
 
 
 def get_recent(limit: int = 10) -> List[dict]:
@@ -90,6 +114,59 @@ def get_recent(limit: int = 10) -> List[dict]:
         rows = conn.execute(
             "SELECT * FROM submissions ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_submission(content_id: str) -> Optional[dict]:
+    """Return the submission row for the given content_id, or None if not found."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM submissions WHERE content_id = ?", (content_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_submission_status(content_id: str, status: str) -> None:
+    """Overwrite the status field on an existing submission row."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE submissions SET status = ? WHERE content_id = ?",
+            (status, content_id),
+        )
+
+
+def write_appeal(entry: dict) -> None:
+    """Append one appeal row to the appeals table."""
+    with _connect() as conn:
+        conn.execute("""
+            INSERT INTO appeals (appeal_id, content_id, creator_id, appeal_reasoning, context, status, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            entry["appeal_id"],
+            entry["content_id"],
+            entry.get("creator_id", ""),
+            entry["appeal_reasoning"],
+            entry.get("context", ""),
+            entry["status"],
+            entry["timestamp"],
+        ))
+
+
+def get_appeals_log() -> List[dict]:
+    """Return all appeal entries with original classification data, newest first."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT
+                a.appeal_id, a.content_id, a.creator_id,
+                a.appeal_reasoning, a.context, a.status, a.timestamp,
+                s.attribution, s.confidence, s.llm_score,
+                s.stylometric_score, s.label_text
+            FROM appeals a
+            LEFT JOIN submissions s ON a.content_id = s.content_id
+            ORDER BY a.id DESC
+        """).fetchall()
     return [dict(row) for row in rows]
 
 
