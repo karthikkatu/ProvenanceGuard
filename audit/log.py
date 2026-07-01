@@ -170,5 +170,13 @@ def get_appeals_log() -> List[dict]:
     return [dict(row) for row in rows]
 
 
+def clear_db() -> dict:
+    """Delete all rows from submissions and appeals tables. Returns row counts removed."""
+    with _connect() as conn:
+        submissions_deleted = conn.execute("DELETE FROM submissions").rowcount
+        appeals_deleted = conn.execute("DELETE FROM appeals").rowcount
+    return {"submissions_deleted": submissions_deleted, "appeals_deleted": appeals_deleted}
+
+
 def _connect() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
